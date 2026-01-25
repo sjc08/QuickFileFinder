@@ -68,28 +68,19 @@ namespace QuickFileFinder
                     new SpinnerColumn())
                 .StartAsync(async ctx =>
                 {
-                    var task1 = ctx.AddTask("[blue]搜索文件/文件夹名称...[/]");
-                    var task2 = ctx.AddTask("[green]搜索JSON文件...[/]");
-                    var task3 = ctx.AddTask("[yellow]搜索数据库文件...[/]");
+                    var unifiedTask = ctx.AddTask("[blue]正在搜索所有文件...[/]");
 
-                    // 并行搜索
                     await Task.Run(() =>
                     {
-                        SearchFileSystemEntries(searchText, directory, comparisonType, searchResults, task1);
-                        task1.StopTask();
-
-                        SearchJsonFiles(searchText, directory, comparisonType, searchResults, task2);
-                        task2.StopTask();
-
-                        SearchDatabaseFiles(searchText, directory, comparisonType, searchResults, task3);
-                        task3.StopTask();
+                        UnifiedFileSearch(searchText, directory, comparisonType, searchResults, unifiedTask);
+                        unifiedTask.StopTask();
                     }, cancellationTokenSource.Token);
                 });
 
             DisplayResults(searchResults);
         }
 
-        private static void SearchFileSystemEntries(
+        private static void UnifiedFileSearch(
             string searchText,
             string directory,
             StringComparison comparisonType,
@@ -105,25 +96,34 @@ namespace QuickFileFinder
                     {
                         IgnoreInaccessible = true,
                         RecurseSubdirectories = true
-                    });
+                    }).ToList();
 
-                var entryList = allEntries.ToList();
-                int totalEntries = entryList.Count;
+                int totalEntries = allEntries.Count;
 
                 for (int i = 0; i < totalEntries; i++)
                 {
-                    var entry = entryList[i];
-                    var entryName = Path.GetFileName(entry);
+                    var entry = allEntries[i];
 
-                    if (entryName.Contains(searchText, comparisonType))
+                    // 检查名称匹配（文件和目录）
+                    CheckNameMatch(searchText, entry, comparisonType, results);
+
+                    // 如果是文件，根据扩展名调用不同的处理器
+                    if (File.Exists(entry))
                     {
-                        var isDirectory = Directory.Exists(entry);
-                        results.Add(new SearchResult
+                        var extension = Path.GetExtension(entry).ToLowerInvariant();
+
+                        // JSON文件处理
+                        if (extension == ".json")
                         {
-                            Path = entry,
-                            MatchType = "名称匹配",
-                            AdditionalInfo = isDirectory ? $"目录: {entryName}" : $"文件: {entryName}"
-                        });
+                            SearchInJsonFile(searchText, entry, comparisonType, results);
+                        }
+                        // 数据库文件处理
+                        else if (extension == ".db" ||
+                                 extension == ".sqlite" ||
+                                 extension == ".sqlite3")
+                        {
+                            SearchInDatabaseFile(searchText, entry, comparisonType, results);
+                        }
                     }
 
                     progress.Value = (i + 1) / (double)totalEntries * 100;
@@ -139,37 +139,23 @@ namespace QuickFileFinder
             }
         }
 
-        private static void SearchJsonFiles(
+        private static void CheckNameMatch(
             string searchText,
-            string directory,
+            string entryPath,
             StringComparison comparisonType,
-            List<SearchResult> results,
-            ProgressTask progress)
+            List<SearchResult> results)
         {
-            try
+            var entryName = Path.GetFileName(entryPath);
+
+            if (entryName.Contains(searchText, comparisonType))
             {
-                var jsonFiles = Directory.EnumerateFiles(
-                    directory,
-                    "*.json",
-                    new EnumerationOptions
-                    {
-                        IgnoreInaccessible = true,
-                        RecurseSubdirectories = true
-                    }).ToList();
-
-                int totalFiles = jsonFiles.Count;
-
-                for (int i = 0; i < totalFiles; i++)
+                var isDirectory = Directory.Exists(entryPath);
+                results.Add(new SearchResult
                 {
-                    var file = jsonFiles[i];
-                    SearchInJsonFile(searchText, file, comparisonType, results);
-
-                    progress.Value = (i + 1) / (double)totalFiles * 100;
-                }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                AnsiConsole.MarkupLine("[yellow]警告: 某些JSON文件访问被拒绝[/]");
+                    Path = entryPath,
+                    MatchType = "名称匹配",
+                    AdditionalInfo = isDirectory ? $"目录: {entryName}" : $"文件: {entryName}"
+                });
             }
         }
 
@@ -302,48 +288,6 @@ namespace QuickFileFinder
                 default:
                     paths.Add(currentPath);
                     break;
-            }
-        }
-
-        private static void SearchDatabaseFiles(
-            string searchText,
-            string directory,
-            StringComparison comparisonType,
-            List<SearchResult> results,
-            ProgressTask progress)
-        {
-            try
-            {
-                var allDbFiles = new List<string>();
-
-                // 搜索多种数据库文件扩展名
-                var dbExtensions = new[] { "*.db", "*.sqlite", "*.sqlite3" };
-
-                foreach (var pattern in dbExtensions)
-                {
-                    allDbFiles.AddRange(Directory.EnumerateFiles(
-                        directory,
-                        pattern,
-                        new EnumerationOptions
-                        {
-                            IgnoreInaccessible = true,
-                            RecurseSubdirectories = true
-                        }));
-                }
-
-                int totalFiles = allDbFiles.Count;
-
-                for (int i = 0; i < totalFiles; i++)
-                {
-                    var file = allDbFiles[i];
-                    SearchInDatabaseFile(searchText, file, comparisonType, results);
-
-                    progress.Value = (i + 1) / (double)totalFiles * 100;
-                }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                AnsiConsole.MarkupLine("[yellow]警告: 某些数据库文件访问被拒绝[/]");
             }
         }
 
